@@ -136,7 +136,7 @@ D as (select C1.region, C1.day as order_date, coalesce(dr.gross_revenue,0) as gr
 E as (select D.*,(lag(gross_rev) over (partition by region order by order_date)) as prev_day_rev from D ) 
 select E.*, 
 (gross_rev-prev_day_rev) as abs_rev_change,
-(gross_rev-prev_day_rev)/nullif(prev_day_rev,0)as DOD_change from E
+round((gross_rev-prev_day_rev)/nullif(prev_day_rev,0)*100,2) as DOD_change from E
 
 
 
