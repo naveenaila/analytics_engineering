@@ -1,0 +1,17 @@
+WITH ranked_updates AS (
+    SELECT 
+        order_id,
+        status,
+        updated_at,
+        ROW_NUMBER() OVER (
+            PARTITION BY order_id 
+            ORDER BY updated_at DESC, update_id DESC
+        ) AS rn
+    FROM order_updates
+)
+SELECT 
+    order_id,
+    status,
+    updated_at
+FROM ranked_updates
+WHERE rn = 1;
