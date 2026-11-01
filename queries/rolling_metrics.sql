@@ -54,9 +54,16 @@ row_number() over (partition by order_id order by updated_at desc) rw_no
 --lag(status) over (order by updated_at desc) as previous_updated_at
 from order_updates) BHJ where BHJ.rw_no =1
 
+
+
+
+
 --------------------------------------- Day 2 ----------------------------------------------
 
---Question 1: Cumulative Running Revenue
+
+
+
+-Question 1: Cumulative Running Revenue
 --Prompt: Calculate the cumulative running total of gross_revenue over time for each region.
 
 --Target Columns: region, order_date, gross_revenue, running_total_revenue
@@ -141,8 +148,79 @@ round((gross_rev-prev_day_rev)/nullif(prev_day_rev,0)*100,2) as DOD_change from 
 
 
 
+-------------------- Day 3: Consecutive Events & Island/Gap Problems --------------------------------
 
 
+
+
+--Q1. Write a query or CTE that extracts distinct user_id and activity_date combinations, ordered by user_id and activity_date.--
+select user_id,activity_date  from user_activity group by 1,2 order by 1,2;
+
+---------Q2--------------: 
+--Consecutive Day Detection using LAG()---
+with ua as (select user_id,activity_date  from user_activity group by 1,2),
+t2 as (select ua.*, lag(activity_date) over (partition by user_id order by activity_date) as comp_date from ua)
+
+select t2.*, 
+case 
+when comp_date is null then 'first_day'	
+when (activity_date-comp_date)=1 then '1' else 'broke the streak' end as consecutive_flag from t2
+
+------Q3---------------
+----The Classic "Gaps & Islands" Pattern (Row Number Difference)----
+with ua as (select user_id,activity_date  from user_activity group by 1,2),
+--t2 as (select ua.*, lag(activity_date) over (partition by user_id order by activity_date) as comp_date from ua),
+t3 as (select ua.*, row_number() over (partition by user_id order by activity_date)as rw_no  from ua)
+
+select t3.*,activity_date::date-cast(rw_no as int) as island_group_id from t3
+
+---- Q4 -----
+----Identifying 3+ Day Streaks---
+
+with ua as (select user_id,activity_date  from user_activity group by 1,2),
+t3 as (select ua.*, row_number() over (partition by user_id order by activity_date)as rw_no  from ua),
+
+t4 as (select t3.*,activity_date::date-cast(rw_no as int) as island_group_id from t3)
+
+select user_id
+,min(activity_date) as start_date
+,max(activity_date) as end_date
+,count(*) from t4  group by user_id,island_group_id having count(*) >= 3 order by 1
+
+
+-------------------- Day 4: Consecutive Events & Island/Gap Problems --------------------------------
+
+--Question 1: Strict Sequential Funnel Conversion
+select * from funnel_events
+
+with page_view as (select  distinct user_id, min(fe.event_timestamp ) as first_entry from funnel_events fe where fe.event_name = 'page_view' group by 1),
+     add_to_cart as (select  distinct fe.user_id, min(fe.event_timestamp ) as first_atc_entry 
+                     from funnel_events fe join page_view pv on fe.user_id =pv.user_id 
+                     where fe.event_name = 'add_to_cart'
+                           and fe.event_timestamp > pv.first_entry  group by 1),
+     checkout as (select  distinct fe.user_id, min(fe.event_timestamp ) as first_chk_entry 
+                     from funnel_events fe join add_to_cart pv on fe.user_id =pv.user_id 
+                     where fe.event_name = 'checkout'
+                           and fe.event_timestamp > pv.first_atc_entry  group by 1),
+     purchase as (select  distinct fe.user_id, min(fe.event_timestamp ) as first_Prch_entry 
+                     from funnel_events fe join checkout pv on fe.user_id =pv.user_id 
+                     where fe.event_name = 'purchase'
+                           and fe.event_timestamp > pv.first_chk_entry  group by 1),
+temp as (                           
+
+select user_id, '1' as step from page_view
+union 
+select user_id, '2' as step from add_to_cart
+union 
+select user_id, '3' as step from checkout
+union 
+select user_id, '4' as step from purchase ),
+
+t2 as (select step,count(distinct user_id) as cnt from temp group by 1),
+
+t3 as (select step,cnt,lag(cnt) over (order by step) as cnt_p from t2)
+
+select t3.*, round((cnt*100.0/nullif(cnt_p,0)),2) as perc from t3;
 
 
 
