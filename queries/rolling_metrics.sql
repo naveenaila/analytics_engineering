@@ -321,7 +321,7 @@ round(count(distinct case when week_alive=cohort_week+7 then user_id end)*100.00
 from cte
 group by 1
 
-
+ 
 
 
 
