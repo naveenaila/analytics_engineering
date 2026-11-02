@@ -56,8 +56,6 @@ from order_updates) BHJ where BHJ.rw_no =1
 
 
 
-
-
 --------------------------------------- Day 2 ----------------------------------------------
 
 
@@ -221,6 +219,116 @@ t2 as (select step,count(distinct user_id) as cnt from temp group by 1),
 t3 as (select step,cnt,lag(cnt) over (order by step) as cnt_p from t2)
 
 select t3.*, round((cnt*100.0/nullif(cnt_p,0)),2) as perc from t3;
+
+----Day 4, Question 2: Flag-Based Funnel Pivot----
+
+with page_view as (select  distinct user_id, min(fe.event_timestamp ) as first_entry from funnel_events fe where fe.event_name = 'page_view' group by 1),
+     add_to_cart as (select  distinct fe.user_id, min(fe.event_timestamp ) as first_atc_entry 
+                     from funnel_events fe join page_view pv on fe.user_id =pv.user_id 
+                     where fe.event_name = 'add_to_cart'
+                           and fe.event_timestamp > pv.first_entry  group by 1),
+     checkout as (select  distinct fe.user_id, min(fe.event_timestamp ) as first_chk_entry 
+                     from funnel_events fe join add_to_cart pv on fe.user_id =pv.user_id 
+                     where fe.event_name = 'checkout'
+                           and fe.event_timestamp > pv.first_atc_entry  group by 1),
+     purchase as (select  distinct fe.user_id, min(fe.event_timestamp ) as first_Prch_entry 
+                     from funnel_events fe join checkout pv on fe.user_id =pv.user_id 
+                     where fe.event_name = 'purchase'
+                           and fe.event_timestamp > pv.first_chk_entry  group by 1),
+temp as (                           
+
+select user_id, '1' as step from page_view
+union 
+select user_id, '2' as step from add_to_cart
+union 
+select user_id, '3' as step from checkout
+union 
+select user_id, '4' as step from purchase ),
+
+a1 as (select 
+user_id,
+1 as "page_view"
+from temp where step in ('1')),
+
+a2 as (select 
+user_id,
+1 as "add_to_cart"
+from temp where step in ('2')),
+
+a3 as (select 
+user_id,
+1 as "checkout"
+from temp where step in ('3')),
+
+a4 as (select 
+user_id,
+1 as "purchase"
+from temp where step in ('4'))
+
+select a1.user_id,coalesce(a1.page_view,0),coalesce(a2.add_to_cart,0),coalesce(a3.checkout,0),coalesce(a4.purchase,0)
+from a1 left join a2 on a1.user_id = a2.user_id 
+left join a3 on a1.user_id = a3.user_id 
+left join a4 on a1.user_id = a4.user_id 
+
+
+----------------------------- short version --------------------------------------------------
+
+WITH user_timestamps AS (
+    SELECT 
+        u.user_id,
+        MIN(CASE WHEN fe.event_name = 'page_view'   THEN fe.event_timestamp END) AS first_view,
+        MIN(CASE WHEN fe.event_name = 'add_to_cart' THEN fe.event_timestamp END) AS first_cart,
+        MIN(CASE WHEN fe.event_name = 'checkout'    THEN fe.event_timestamp END) AS first_checkout,
+        MIN(CASE WHEN fe.event_name = 'purchase'    THEN fe.event_timestamp END) AS first_purchase
+    FROM user_signups u
+    LEFT JOIN funnel_events fe ON u.user_id = fe.user_id
+    GROUP BY u.user_id
+)
+SELECT 
+    user_id,
+    CASE WHEN first_view     IS NOT NULL THEN 1 ELSE 0 END AS has_viewed,
+    CASE WHEN first_cart     IS NOT NULL THEN 1 ELSE 0 END AS has_carted,
+    CASE WHEN first_checkout IS NOT NULL THEN 1 ELSE 0 END AS has_checked_out,
+    CASE WHEN first_purchase IS NOT NULL THEN 1 ELSE 0 END AS has_purchased,
+    ROUND(
+        (EXTRACT(EPOCH FROM (first_purchase - first_view)) / 60.0)::numeric, 
+        2
+    ) AS view_to_purchase_time_minutes
+FROM user_timestamps
+ORDER BY user_id;
+
+
+-------------------------------- Q2 Cohort Retention -------------------------------------------------------
+
+
+with sups as (select user_id, date_trunc('week',signup_date)::date as cohort_week from user_signups), 
+
+rtn as (select user_id, date_trunc('week',fe.event_timestamp )::date as week_alive from funnel_events fe ),
+
+cte as (select 
+s.user_id,
+s.cohort_week,
+r.week_alive
+from sups s left join rtn r on s.user_id=r.user_id)
+
+select 
+cohort_week,
+count(distinct user_id) as cohort_group,
+count(distinct case when week_alive=cohort_week then user_id end) as week_0_retention,
+count(distinct case when week_alive=cohort_week+7 then user_id end) as week_1_retention,
+count(distinct case when week_alive=cohort_week+14 then user_id end) as week_2_retention,
+round(count(distinct case when week_alive=cohort_week+7 then user_id end)*100.00/count(distinct user_id),2) as week_1_retention
+from cte
+group by 1
+
+
+
+
+
+
+
+
+
 
 
 
