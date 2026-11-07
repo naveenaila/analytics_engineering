@@ -296,3 +296,384 @@ order by 1
 
 select * from saas.tasks; 
 
+
+--- E01: B------
+
+--Required output: one row per account, 
+--including accounts with zero members or zero activity, 
+--sorted by account_id. The columns are account_id, account_name, members_eom, engaged_members, engagement_events and engaged_pct.
+
+
+with mem as (select m.account_id ,m.user_id  from saas.accounts a left join  saas.memberships m  on a.account_id =m.account_id 
+             where (m.joined_at < '2026-03-01' and m.left_at is null) or (m.joined_at < '2026-03-01' and m.left_at >= '2026-03-01' ) ),
+            
+
+                   
+      events as (select event_id,user_id,account_id from saas.events e
+                  where event_name in ('task_completed','comment_added')
+                  and e.occurred_at >= '2026-02-01'
+                  and  e.occurred_at < '2026-03-01'),
+                  
+      non_user as (select * from mem where user_id in (select user_id from saas.users u where u.is_internal is false) )
+      
+      select 
+      a.account_id,
+      a.account_name,
+      count(distinct nu.user_id) as mem_count,
+      count(distinct e.user_id) as event_count,
+      count( distinct e.event_id) as eng_events,
+      round(count( distinct e.user_id)*100.0/nullif(count(distinct nu.user_id),0),1) as eng_pct
+  
+      from saas.accounts a left join non_user nu 
+      on a.account_id =nu.account_id
+      left join events e on e.account_id = a.account_id and e.user_id = nu.user_id
+      group by 1,2
+      order by 1
+      
+      
+ ----- E 05 -----
+ 
+ /* Query A: The columns are project_id, project_name, account_id, completed_tasks and completed_pts
+  * 
+  * Rows per project id and account id 
+  * population: tasks calculation
+  * Metric comp task and pnts
+  * 
+  */
+  
+  select * from saas.task_projects ;   
+  
+  select * from saas.projects
+      
+
+  select * from saas.tasks deleted_at is null and completed_at >= '2026-01-01' and completed_at < '2026-04-01'
+  
+  
+  select 
+  p.project_id,
+  p.project_name,
+  a.account_id,
+  SUM(case when t.deleted_at is null and t.completed_at >= '2026-01-01' and t.completed_at < '2026-04-01' then 1 else 0 end) as completed_tasks,
+  coalesce(SUM(case when t.deleted_at is null and t.completed_at >= '2026-01-01' and t.completed_at < '2026-04-01' then t.estimate_pts else 0 end),0) as estimated_points
+  from saas.accounts a 
+  join saas.projects p 
+  on a.account_id = p.account_id
+  join saas.task_projects tp
+  on tp.project_id=p.project_id 
+  join saas.tasks t 
+  on a.account_id = t.account_id and t.task_id = tp.task_id
+  group by 1,2,3
+  order by 1
+  
+  
+  ---- Redo ----
+  
+   ---Q1-- 
+  select 
+  p.project_id,
+  p.project_name,
+  p.account_id,
+  count(distinct t.task_id) as completed_tasks,
+  coalesce(SUM(t.estimate_pts),0) as estimated_points
+  from saas.projects p 
+  left join saas.task_projects tp
+  on tp.project_id=p.project_id 
+  left join saas.tasks t 
+  on p.account_id = t.account_id 
+  and t.task_id = tp.task_id
+  and t.deleted_at is null
+  and t.completed_at >= '2026-01-01'
+  and t.completed_at < '2026-04-01'
+  group by 1,2,3
+  order by 1
+  ----Q2----
+  
+   select
+  a.account_id,
+  a.account_name,
+  count(distinct t.task_id) as completed_tasks,
+  coalesce(SUM(t.estimate_pts),0) as estimated_points
+
+  from saas.accounts a
+  left join saas.tasks t
+  on  t.account_id = a.account_id
+  and t.deleted_at is null
+  and t.completed_at >= '2026-01-01'
+  and t.completed_at < '2026-04-01'
+  group by 1,2
+  order by 1
+  
+
+  
+  ------ E20 -----
+/*
+ * A customer success manager says the April active-users report is missing accounts. 
+ * Every account should appear, with 0 when it had no activity. 
+ * The analyst who wrote it says it uses a LEFT JOIN, so nothing can be missing.
+Your tasks
+1. Explain the cause in one or two sentences, as you would to the analyst.
+2. Fix the query.
+3. Propose one SQL check that would catch this bug automatically in future.
+
+Explanation:
+
+1. The problem is in where insread of filtering out using occured date which removes any accounts not in that date range, instead use join on condition.
+
+ */  
+
+ with A_temp as (
+  
+  SELECT a.account_id,
+       a.account_name,
+       COUNT(DISTINCT e.user_id) AS active_users
+FROM saas.accounts a
+LEFT JOIN saas.events e
+  ON e.account_id = a.account_id
+  where ( e.occurred_at >= '2026-04-01'
+  AND e.occurred_at <  '2026-05-01'
+  AND e.event_name IN ('task_created','task_completed',
+                       'comment_added','project_created'))
+OR e.event_id IS NULL
+GROUP BY a.account_id, a.account_name
+ORDER BY a.account_id ) 
+
+
+--- Validation ---  
+select at.account_id 
+from saas.accounts at
+where not exists (select 1 from A_temp A where at.account_id = A.account_id )
+
+select * from saas.events
+
+
+---- E06 ---
+
+/*
+ * For a user-status table, what was each real user's most recent event?
+ * Definitions
+• Scope: non-internal users with at least one event. Any event name counts, and any account, including a NULL account_id.
+• Latest event: the event with the greatest occurred_at.
+• Tie-break: if several events share that occurred_at, take the one with the highest event_id. Each user must return exactly one row.
+
+
+Required output: one row per user, sorted by user_id. The columns are user_id, event_id, event_name and occurred_at.
+
+* row per user, 
+* 
+* event + users table
+*
+*
+**/
+
+
+select * from saas.events
+
+
+with A as (
+select
+u.user_id,
+e.event_id,
+e.event_name,
+occurred_at,
+row_number() over (partition by u.user_id order by e.occurred_at desc,e.event_id desc ) as rn
+from saas.users u 
+ join saas.events e
+on u.user_id = e.user_id
+where u.is_internal is false )
+
+select user_id,
+event_id,
+event_name,occurred_at from A where rn=1
+order by 1
+
+select * from saas.events where user_id = 118
+
+------ MAx ----
+select
+u.user_id,
+Max(occurred_at)
+
+from saas.users u 
+ join saas.events e
+on u.user_id = e.user_id
+where u.is_internal is false 
+group by 1
+order by 1
+
+---- redshift/ databricks Version without a sub query -----
+
+
+select 
+u.user_id,
+e.event_id,
+e.event_name,
+occurred_at
+from saas.users u 
+join saas.events e
+on u.user_id = e.user_id
+where u.is_internal is false 
+qualify row_number() over (partition by user_id order by e.occurred_at desc, event_id desc)=1
+order by 1
+
+------
+
+/*Definitions
+• Scope: account_id 2, with occurred_at in March 2026 UTC. Every event name counts, and a NULL user_id is kept.
+• Logical event: one distinct event_id.
+• Copy to keep: the earliest ingested_at for that event_id.
+
+
+Required output: one row per event_id, sorted by event_id. The columns are event_id, user_id, event_name, occurred_at and ingested_at.
+ * 
+ */
+
+
+SET TIME ZONE 'UTC' ;
+
+select
+event_id,
+user_id,
+event_name,
+occurred_at,
+ingested_at
+from (
+select 
+event_id,
+user_id,
+event_name,
+occurred_at,
+ingested_at,
+row_number() over (partition by event_id order by ingested_at) as rn
+from saas.events e 
+where occurred_at >= '2026-03-01'
+and occurred_at < '2026-04-01'
+and account_id =2
+) A where A.rn=1
+order by 1
+
+--- E09 ---
+
+/*
+ * Definitions
+• Qualifying event: a logical event named task_created, task_completed, comment_added or project_created, with occurred_at in March 2026 UTC, and a non-NULL account_id.
+• Scope: non-internal users.
+• qualifying_events: each user's qualifying events in that account.
+• place: users ranked within each account by qualifying_events, highest first. Users with equal counts share a place, and the next place is the next number, with no gaps.
+• Top users: users in place 1 or 2. Accounts with no qualifying events don't appear.
+
+
+Required output: one row per account and user, sorted by account_id, then place, then user_id. The columns are account_id, user_id, qualifying_events and place.
+
+Hihest Qual events - 1st
+Equal counts = share rank
+Next place is next number , so use dense rank, no gaps
+Top users, 1 0r 2, No Qualifying Accounts - Join 
+ */
+
+
+
+
+
+with A as (select 
+e.account_id,
+u.user_id, 
+count(distinct e.event_id) as Qual_events_count
+from saas.users u 
+join saas.events e
+on u.user_id = e.user_id
+where u.is_internal is false
+and e.event_name in ('task_created','task_completed','project_created','comment_added')
+and occurred_at >= '2026-03-01' 
+and  occurred_at < '2026-04-01' 
+and e.account_id is not null
+group by 1,2)
+
+
+
+select 
+account_id,
+user_id,
+Qual_events_count,
+place 
+from 
+(
+select 
+account_id,
+user_id,
+Qual_events_count,
+dense_rank() over (partition by account_id order by Qual_events_count desc ) as place
+from A 
+) QT
+--where QT.place <= 2 
+order by 1,4,2
+
+
+
+/*
+ * Business question: For the executive summary, how did the number of active accounts change each month from January to April 2026?
+ * 
+ * Definitions
+• Qualifying event: an event named task_created, task_completed, comment_added or project_created, by a non-internal user, with a non-NULL account_id.
+
+• Active account in a month: an account with at least one qualifying event in that calendar month UTC.
+
+• active_accounts: active accounts in that month.
+
+• prev_month_active: active_accounts for the previous month; NULL for January.
+
+• change: active_accounts minus prev_month_active.
+
+• pct_change: 100 * change / prev_month_active, rounded to 1 decimal place.
+
+• is_complete: true when the whole month has ended by practice today.
+
+Required output: one row per month, January to April 2026, sorted by month. 
+
+The columns are month (first day of the month, as a date), active_accounts, prev_month_active, change, pct_change and is_complete.
+ * 
+ */
+
+select 
+month_start,
+active_accounts,
+lag(active_accounts) over ( order by month_start) as prev_month_active,
+(active_accounts-lag(active_accounts) over (order by month_start)) as change,
+round((active_accounts-lag(active_accounts) over (order by month_start))*100.0/nullif(lag(active_accounts) over ( order by month_start),0),2) as pct_change,
+(month_start + interval '1 month')::date <= '2026-04-30'::date as is_complete
+
+from(
+
+select 
+date_trunc('month',occurred_at)::date as month_start,
+count(distinct e.account_id) as active_accounts
+from saas.users u 
+join saas.events e 
+on u.user_id = e.user_id
+where u.is_internal is false
+and e.event_name in ('task_created','task_completed','project_created','comment_added')
+and e.account_id is not null
+and occurred_at >= '2026-01-01' 
+and  occurred_at < '2026-05-01' 
+group by 1
+)
+order by 1
+
+
+------- E09 -----
+
+/*
+ * Target time: 10 minutes (stop at 20 if stuck)
+Business question: Product wants a daily active users chart for March 2026 with no gaps, so a quiet day shows as 0 rather than disappearing.
+Use saas.users and saas.events. Timestamps are UTC.
+Definitions
+• Qualifying event: an event named task_created, task_completed, comment_added or project_created, by a non-internal user. Any account counts, including a NULL account_id.
+• dau: distinct users with at least one qualifying event on that UTC calendar day.
+Required output: one row for every day of March 2026 (31 rows), sorted by activity_date. The columns are activity_date (a date) and dau, with 0 on days with no active users.
+Expected output
+Days not listed below have dau 0. There are 17 of them.
+ */
+
+
+
+
+
